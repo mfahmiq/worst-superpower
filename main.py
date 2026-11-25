@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Worst Superpower — make.fun entry.
+"""Worst Superpower — make.fun entry (u-suroto-worst-superpower-461dcdbe).
 
 The entry
 ---------
@@ -73,48 +73,58 @@ constant, because a joke that changes every run is not a joke, it is
 a bug. The reasoning above is the design document; the constant below
 is the punchline it produces.
 
-The entry is stored as two string parts and written in two writes
-(the split-write pattern): the program assembles the line from its
-parts at runtime and writes part one, then part two plus the trailing
-newline. The checked-in ``entry.txt`` carries the same bytes, so a
-byte-for-byte diff between the two must pass.
+Before any write, :func:`validate` enforces the competition gate
+(1–140 characters, single line, UTF-8 encodable) and raises
+``ValueError`` on failure, so a bad entry fails loudly instead of
+being submitted. The checked-in ``entry.txt`` carries the same bytes,
+so a byte-for-byte diff between the produced file and it must pass.
 """
 
 import os
 import sys
 
 
-# The entry line, split into two parts. Exactly one line, 68 characters,
-# no trailing spaces — the gate allows 1 to 140 UTF-8 characters and the
-# judge compares the file exactly as submitted, so the bytes here are
-# the bytes that get judged. Do not "improve" this string: every
-# alternative considered lost to it in the pairwise tournament in
-# CANDIDATES.md, judged against the published brief in weight order.
-ENTRY_PART_A = "I can see five seconds into the future, "
-ENTRY_PART_B = "but only of myself blinking."
+# The entry line. Exactly one line, 68 characters, no trailing spaces —
+# the gate allows 1 to 140 UTF-8 characters and the judge compares the
+# file exactly as submitted, so the bytes here are the bytes that get
+# judged. Do not "improve" this string: every alternative considered
+# lost to it in the pairwise tournament in CANDIDATES.md, judged
+# against the published brief in weight order.
+ENTRY = "I can see five seconds into the future, but only of myself blinking."
 
-# Gate limit for this competition (see RULES.txt: 1–140 characters).
+# Gate limits for this competition (see RULES.txt: 1–140 characters).
+MIN_CHARS = 1
 MAX_CHARS = 140
 
 
-def get_entry() -> str:
-    """Return the entry line exactly as it will be judged.
+def validate(entry: str) -> None:
+    """Enforce the competition gate before any write.
 
-    Kept behind a function so the value written by :func:`main` and
-    the value documented at the top of this module can never drift
-    apart: there are two constants, one accessor, one write site. The
-    gate's byte check compares the produced file against the checked-in
-    ``entry.txt``; both come from these same constants.
+    Raises ``ValueError`` if the entry is empty, over 140 characters,
+    spans more than one line, or cannot be encoded as UTF-8.
     """
-    return ENTRY_PART_A + ENTRY_PART_B
+    if not entry or entry.isspace():
+        raise ValueError("entry must not be blank")
+    if len(entry) < MIN_CHARS or len(entry) > MAX_CHARS:
+        raise ValueError(
+            "entry must be %d-%d characters, got %d"
+            % (MIN_CHARS, MAX_CHARS, len(entry))
+        )
+    if "\n" in entry or "\r" in entry:
+        raise ValueError("entry must be a single line")
+    entry.encode("utf-8")  # raises UnicodeEncodeError if not valid UTF-8
 
 
 def main() -> int:
-    """Write the entry line to the output directory and exit 0."""
+    """Validate the entry, write it to the output directory, exit 0."""
     # The grader sets MAKEFUN_OUTPUT_DIR; default to /output so the
     # program also works when run bare. Nothing else is read from the
     # environment, and nothing is written anywhere except entry.txt.
     output_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
+
+    # Validate before any write: a gate failure must never produce a
+    # half-written or invalid entry file.
+    validate(ENTRY)
 
     # Create the directory if the sandbox has not made it yet. This is
     # the only filesystem effect besides the entry file itself.
@@ -122,34 +132,33 @@ def main() -> int:
 
     entry_path = os.path.join(output_dir, "entry.txt")
 
-    line = get_entry()
-
-    # Cheap self-check, run before any write: the gate rejects an entry
-    # that is empty, whitespace-only, over 140 characters, or spanning
-    # more than one line. Asserting the shape here means a future typo
-    # fails loudly in development instead of silently at grading time.
-    assert line and not line.isspace(), "entry must not be blank"
-    assert len(line) <= MAX_CHARS, "entry must fit the 140-character gate"
-    assert "\n" not in line and "\r" not in line, "entry must be one line"
-    line.encode("utf-8")  # raises if the line is not valid UTF-8
-
-    # Split-write: part one, then part two plus exactly one trailing
-    # newline, UTF-8, no BOM. The newline is conventional for a text
-    # file and is part of the entry as submitted; the checked-in
-    # entry.txt carries the same bytes, so a byte-for-byte diff
-    # between the two must pass.
+    # Write the entry verbatim plus exactly one trailing newline,
+    # UTF-8, no BOM. The newline is conventional for a text file and is
+    # part of the entry as submitted; the checked-in entry.txt carries
+    # the same bytes, so a byte-for-byte diff between the two must pass.
     with open(entry_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(ENTRY_PART_A)
-        fh.write(ENTRY_PART_B + "\n")
+        fh.write(ENTRY + "\n")
 
-    print("wrote %s (%d characters)" % (entry_path, len(line)))
+    # Read-back verification: re-read the file as bytes and compare
+    # against the entry encoded as UTF-8. A mismatch means the bytes
+    # on disk are not the bytes that get judged — fail loudly instead
+    # of submitting a corrupted entry.
+    with open(entry_path, "rb") as fh:
+        written = fh.read()
+    if written != (ENTRY + "\n").encode("utf-8"):
+        print(
+            "error: read-back mismatch in %s" % entry_path, file=sys.stderr
+        )
+        return 1
+
+    print(ENTRY)
     return 0
 
 
 if __name__ == "__main__":
     # Exit code 0 on success; any exception (bad output dir, disk
-    # full, assertion above) propagates and fails the run loudly
-    # rather than writing a half-entry. The grader runs this program
-    # twice in separate sandboxes; both runs must produce the same
-    # bytes, which a constant entry guarantees.
+    # full, validation failure above) propagates and fails the run
+    # loudly rather than writing a half-entry. The grader runs this
+    # program twice in separate sandboxes; both runs must produce the
+    # same bytes, which a constant entry guarantees.
     sys.exit(main())
